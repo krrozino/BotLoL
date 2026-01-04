@@ -2,67 +2,29 @@ import discord
 from discord.ext import commands
 import random
 import os
-from pymongo import MongoClient
-from server import keep_alive # Importa o site falso
+from server import keep_alive
+
+# Importando nossas funções dos outros arquivos
+from database import get_jogador, criar_jogador, atualizar_pdl
+from utils import calcular_elo
 
 # --- CONFIGURAÇÃO ---
-# O Token e o Link do Banco virão das variáveis do Render
 TOKEN = os.environ.get('TOKEN')
-MONGO_URL = os.environ.get('MONGO_URL')
 
-# Configuração do Banco de Dados
-cluster = MongoClient(MONGO_URL)
-db = cluster["InhouseBot"]
-collection = db["Jogadores"]
-
-# Configurações do Bot
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
+bot.remove_command('help')
 
+# Variáveis globais (Memória RAM)
 fila = []
 partida_atual = None
 
-# --- FUNÇÕES DE BANCO DE DADOS ---
-def get_jogador(user_id):
-    return collection.find_one({"_id": str(user_id)})
-
-def criar_jogador(user_id, nick, opgg):
-    collection.insert_one({
-        "_id": str(user_id),
-        "nick": nick,
-        "opgg": opgg,
-        "pdl": 1000,
-        "vitorias": 0,
-        "derrotas": 0
-    })
-
-def atualizar_pdl(user_id, pdl_mudanca, vitoria):
-    # $inc aumenta ou diminui o valor. $set atualiza valores fixos
-    update_query = {
-        "$inc": {"pdl": pdl_mudanca, "vitorias": 1 if vitoria else 0, "derrotas": 0 if vitoria else 1}
-    }
-    collection.update_one({"_id": str(user_id)}, update_query)
-    
-    # Garante que não fique negativo
-    jogador = get_jogador(user_id)
-    if jogador["pdl"] < 0:
-        collection.update_one({"_id": str(user_id)}, {"$set": {"pdl": 0}})
-
-def calcular_elo(pdl):
-    if pdl < 1000: return "Ferro"
-    if pdl < 1200: return "Bronze"
-    if pdl < 1400: return "Prata"
-    if pdl < 1600: return "Ouro"
-    if pdl < 1800: return "Platina"
-    if pdl < 2000: return "Esmeralda"
-    return "Diamante+"
-
-# --- COMANDOS ---
+# --- EVENTOS E COMANDOS ---
 
 @bot.event
 async def on_ready():
-    print(f'✅ Bot Online e Conectado ao Banco!')
+    print(f'✅ Bot Online: {bot.user}')
 
 @bot.command()
 async def registrar(ctx, nick: str, opgg: str = "Não informado"):
@@ -82,6 +44,7 @@ async def perfil(ctx, membro: discord.Member = None):
         return
 
     elo = calcular_elo(dados['pdl'])
+    
     msg = f"**Perfil de {dados['nick']}**\n"
     msg += f"🏅 Elo: **{elo}** ({dados['pdl']} PDL)\n"
     msg += f"⚔️ V/D: {dados['vitorias']}/{dados['derrotas']}\n"
@@ -101,12 +64,34 @@ async def join(ctx):
     else:
         fila.append(ctx.author)
         await ctx.send(f"{ctx.author.mention} entrou! ({len(fila)}/10)")
-        if len(fila) == 10: # Mude para 2 para testar
+        if len(fila) == 10: 
             await iniciar_partida(ctx)
 
 @bot.command()
+async def leave(ctx):
+    if ctx.author in fila:
+        fila.remove(ctx.author)
+        await ctx.send(f"🏃 {ctx.author.mention} saiu da fila. ({len(fila)}/10)")
+    else:
+        await ctx.send("Você não está na fila.")
+
+@bot.command()
+async def fila(ctx):
+    if not fila:
+        await ctx.send("A fila está vazia.")
+    else:
+        nomes = [p.display_name for p in fila]
+        await ctx.send(f"📋 **Fila Atual ({len(fila)}/10):**\n" + "\n".join(nomes))
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def reset(ctx):
+    fila.clear()
+    await ctx.send("🧹 Fila limpa por um administrador!")
+
+@bot.command()
 async def start(ctx):
-    if len(fila) < 10: # Mude aqui para testes
+    if len(fila) < 10: 
         await ctx.send(f"Faltam {10 - len(fila)} jogadores.")
     else:
         await iniciar_partida(ctx)
@@ -162,6 +147,22 @@ async def vitoria(ctx, time_vencedor: str):
     partida_atual = None
     await ctx.send(msg)
 
-# Liga o servidor web e o bot
+# Help e Error Handler
+@bot.command()
+async def help(ctx):
+    embed = discord.Embed(title="📜 Central de Ajuda", color=0x00ff00)
+    embed.add_field(name="Jogadores", value="`!registrar`, `!perfil`, `!join`, `!leave`, `!fila`", inline=False)
+    embed.add_field(name="Admins", value="`!start`, `!vitoria`, `!reset`", inline=False)
+    await ctx.send(embed=embed)
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(f"❌ Use: `{ctx.prefix}{ctx.command.name} <argumento>`")
+    elif isinstance(error, commands.CommandNotFound):
+        pass
+    else:
+        print(f"Erro: {error}")
+
 keep_alive()
 bot.run(TOKEN)
