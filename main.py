@@ -75,10 +75,7 @@ class AdminGroup(app_commands.Group):
     @app_commands.default_permissions(administrator=True)
     async def setpdl(self, interaction: discord.Interaction, membro: discord.Member, quantidade: int):
         set_pdl_manual(membro.id, quantidade)
-        
-        # Atualiza cargo automaticamente
         await gerenciar_cargos_elo(membro, quantidade)
-        
         await interaction.response.send_message(f"👮 PDL de **{membro.display_name}** definido para **{quantidade}**. Cargos atualizados.")
 
     @app_commands.command(name="cancelar", description="Cancela partida atual.")
@@ -114,10 +111,8 @@ class AdminGroup(app_commands.Group):
         
         azul, verm = [], []
         for i, p in enumerate(ordenados):
-            if i % 4 == 0 or i % 4 == 3:
-                azul.append(p)
-            else:
-                verm.append(p)
+            if i % 4 == 0 or i % 4 == 3: azul.append(p)
+            else: verm.append(p)
         
         partida_atual['azul'] = azul
         partida_atual['vermelho'] = verm
@@ -157,7 +152,6 @@ class AdminGroup(app_commands.Group):
         ganhadores = partida_atual[vencedor]
         perdedores = partida_atual['vermelho'] if vencedor == 'azul' else partida_atual['azul']
         
-        # Histórico salva sempre
         nomes_azul = [get_jogador(p.id)['nick'] for p in partida_atual['azul']]
         nomes_vermelho = [get_jogador(p.id)['nick'] for p in partida_atual['vermelho']]
         salvar_historico(vencedor, nomes_azul, nomes_vermelho, modo_jogo)
@@ -166,34 +160,24 @@ class AdminGroup(app_commands.Group):
         msg = f"🏆 **VITÓRIA {vencedor.upper()}** - {tipo_partida}\n\n"
         
         if valendo_pdl:
-            # Ganhadores
             for p in ganhadores:
                 bonus = atualizar_pdl(p.id, 20, True, modo=modo_jogo) 
                 d = get_jogador(p.id)
                 pdl_novo = d.get("pdl", 1000) if modo_jogo == "sr" else d.get(f"pdl_{modo_jogo}", 1000)
-                
-                # Só atualiza cargo se for Summoner's Rift
-                if modo_jogo == "sr":
-                    await gerenciar_cargos_elo(p, pdl_novo)
-
+                if modo_jogo == "sr": await gerenciar_cargos_elo(p, pdl_novo)
                 aviso = "🔥" if bonus > 0 else ""
                 msg += f"📈 {d['nick']}: +{20+bonus} ({pdl_novo}) {aviso}\n"
             
             msg += "\n"
-            # Perdedores
             for p in perdedores:
                 atualizar_pdl(p.id, -20, False, modo=modo_jogo)
                 d = get_jogador(p.id)
                 pdl_novo = d.get("pdl", 1000) if modo_jogo == "sr" else d.get(f"pdl_{modo_jogo}", 1000)
-                
-                if modo_jogo == "sr":
-                    await gerenciar_cargos_elo(p, pdl_novo)
-                    
+                if modo_jogo == "sr": await gerenciar_cargos_elo(p, pdl_novo)
                 msg += f"📉 {d['nick']}: -20 ({pdl_novo})\n"
         else:
             msg += "**Jogadores:**\n"
-            for p in ganhadores:
-                msg += f"✨ {p.display_name}\n"
+            for p in ganhadores: msg += f"✨ {p.display_name}\n"
 
         partida_atual = None
         await interaction.followup.send(msg)
@@ -221,7 +205,6 @@ async def registrar(ctx, nick: str, opgg: str = "Não informado"):
         criar_jogador(ctx.author.id, nick, opgg)
         msg = f"✅ Conta criada para **{nick}**!"
         
-        # Cargos de Registro
         cargo_reg = discord.utils.get(ctx.guild.roles, name="Registrado")
         cargo_nreg = discord.utils.get(ctx.guild.roles, name="Não Registrado")
 
@@ -232,12 +215,9 @@ async def registrar(ctx, nick: str, opgg: str = "Não informado"):
             try: await ctx.author.remove_roles(cargo_nreg)
             except: pass
         
-        # Cargo de Elo Inicial
         await gerenciar_cargos_elo(ctx.author, 1000)
-        
         msg += " Cargos aplicados!"
         await ctx.send(msg)
-
     except Exception as e:
         await ctx.send(f"❌ Erro: {e}", ephemeral=True)
 
@@ -248,9 +228,7 @@ async def join(ctx):
     
     fila.append(ctx.author)
     await ctx.send(f"⚔️ {ctx.author.mention} entrou! ({len(fila)} Jogadores)")
-    
-    if len(fila) == 10:
-        await ctx.send("🔥 **Fila Cheia (10)!** Admin, use `/start`.")
+    if len(fila) == 10: await ctx.send("🔥 **Fila Cheia (10)!** Admin, use `/start`.")
 
 @bot.hybrid_command(name="leave", description="Sair da fila.")
 async def leave(ctx):
@@ -290,11 +268,9 @@ async def rota(ctx, lane: app_commands.Choice[str]):
 async def start(ctx, modo: app_commands.Choice[str], valendo_pdl: bool = True, ignorar_tamanho: bool = False):
     modo_valor = modo.value if modo else "sr"
     qtd = len(fila)
-    
     if qtd < 2: return await ctx.send("❌ Mínimo 2 jogadores.")
     if not ignorar_tamanho and qtd < 10: return await ctx.send(f"⚠️ Faltam players. Use `ignorar_tamanho: True` se quiser forçar.")
     if qtd % 2 != 0: return await ctx.send("⚠️ Número ímpar de jogadores.")
-
     await iniciar_partida(ctx, modo_valor, valendo_pdl)
 
 async def iniciar_partida(ctx, modo_jogo, valendo_pdl):
@@ -370,7 +346,6 @@ async def perfil(ctx, membro: discord.Member = None):
 async def ranking(ctx, modo: app_commands.Choice[str] = None):
     sel_modo = modo.value if modo else "sr"
     top = get_ranking(sel_modo)
-    
     embed = discord.Embed(title=f"🏆 Ranking - {sel_modo.upper()}", color=0xffd700)
     txt = ""
     for i, p in enumerate(top):
@@ -399,6 +374,41 @@ async def historico(ctx):
         v = p['vencedor']
         m = p.get('modo', 'sr').upper()
         embed.add_field(name=f"🏆 {v.upper()} ({m})", value=f"**Azul:** {', '.join(p['azul'])}\n**Verm:** {', '.join(p['vermelho'])}", inline=False)
+    await ctx.send(embed=embed)
+
+@bot.hybrid_command(name="help", description="Mostra a lista de todos os comandos.")
+async def help(ctx):
+    embed = discord.Embed(title="📘 Manual do Bot - Inhouse", description="Lista de comandos disponíveis.", color=0x3498db)
+    
+    # Comandos para todos
+    txt_jogadores = """
+    `/registrar` - Cria sua conta (obrigatório).
+    `/join` - Entra na fila para jogar.
+    `/leave` - Sai da fila.
+    `/fila` - Mostra a lista de espera.
+    `/rota` - Escolhe sua posição (Top, Jungle, etc).
+    `/perfil` - Vê seu Elo, Vitórias e Winrate.
+    `/ranking` - Mostra o Top 10 do servidor.
+    `!diario` - Resgata pontos grátis todo dia.
+    `!mvp @jogador` - Vota no destaque da partida.
+    `!historico` - Vê resultados recentes.
+    """
+    embed.add_field(name="🎮 Jogadores", value=txt_jogadores, inline=False)
+
+    # Comandos para Admins (Só mostra se tiver permissão, visualmente ajuda saber que existem)
+    txt_admin = """
+    `/start` - Inicia a partida (SR, ARAM, Arena).
+    `/admin vitoria` - Finaliza o jogo e distribui PDL.
+    `/admin shuffle` - Mistura os times novamente.
+    `/admin kick` - Remove alguém da fila.
+    `/admin setpdl` - Edita pontos manualmente.
+    `/admin cancelar` - Cancela partida em andamento.
+    `/admin reset` - Limpa a fila inteira.
+    """
+    embed.add_field(name="👮 Administração", value=txt_admin, inline=False)
+    
+    embed.set_footer(text="Dica: Comandos com '/' são mais fáceis de usar!")
+    
     await ctx.send(embed=embed)
 
 keep_alive()
