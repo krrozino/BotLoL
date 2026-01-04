@@ -409,7 +409,7 @@ async def help(ctx):
     
     embed.set_footer(text="Dica: Comandos com '/' são mais fáceis de usar!")
     
-    await ctx.send(embed=embed)
+    await ctx.send(embed=embed)     
 
 keep_alive()
 bot.run(TOKEN)
