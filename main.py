@@ -5,12 +5,13 @@ import os
 import datetime
 from server import keep_alive
 
-# Importando database
+# Importando database (Atualizado com novas funções)
 from database import (
     get_jogador, criar_jogador, atualizar_pdl, atualizar_rota, 
     get_ranking, editar_perfil, set_pdl_manual, get_dados_varios, 
     adicionar_mvp, resgatar_diario, salvar_historico, get_ultimas_partidas,
-    aplicar_punicao, checar_banimento
+    aplicar_punicao, checar_banimento,
+    get_ranking_paginado, contar_jogadores, get_historico_pessoal # Novos imports
 )
 from utils import calcular_elo, calcular_winrate, get_icone_modo, get_icone_elo
 
@@ -28,7 +29,8 @@ fila = []
 partida_atual = None 
 ultimo_movimento_fila = datetime.datetime.now()
 
-# --- SISTEMA DE BOTÕES (VIEW) ---
+# --- VIEWS (BOTÕES) ---
+
 class FilaView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -90,6 +92,47 @@ class FilaView(discord.ui.View):
         wr = calcular_winrate(d['vitorias'], d['derrotas'])
         icone = get_icone_elo(d['pdl'])
         await interaction.response.send_message(f"📊 **{d['nick']}**: {icone} {elo} ({d['pdl']} PDL) - WR: {wr}", ephemeral=True)
+
+class RankingView(discord.ui.View):
+    def __init__(self, modo):
+        super().__init__(timeout=60)
+        self.pagina = 0
+        self.modo = modo
+        self.total_jogadores = contar_jogadores()
+
+    async def atualizar_embed(self, interaction):
+        top = get_ranking_paginado(self.modo, skip=self.pagina*10, limit=10)
+        icone = get_icone_modo(self.modo)
+        embed = discord.Embed(title=f"{icone} Ranking - {self.modo.upper()}", color=0xffd700)
+        
+        txt = ""
+        for i, p in enumerate(top):
+            val = p.get('pdl', 1000) if self.modo == "sr" else p.get(f'pdl_{self.modo}', 1000)
+            posicao = (self.pagina * 10) + i + 1
+            medalha = "👑" if posicao == 1 else f"{posicao}º"
+            txt += f"**{medalha} {p['nick']}** — {val} PDL\n"
+        
+        embed.description = txt if txt else "Ninguém nessa página."
+        embed.set_footer(text=f"Página {self.pagina + 1} • Total: {self.total_jogadores}")
+        
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(emoji="⬅️", style=discord.ButtonStyle.primary, disabled=True)
+    async def anterior(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.pagina > 0:
+            self.pagina -= 1
+            self.proximo.disabled = False
+            if self.pagina == 0: button.disabled = True
+            await self.atualizar_embed(interaction)
+
+    @discord.ui.button(emoji="➡️", style=discord.ButtonStyle.primary)
+    async def proximo(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if (self.pagina + 1) * 10 < self.total_jogadores:
+            self.pagina += 1
+            self.anterior.disabled = False
+            if (self.pagina + 1) * 10 >= self.total_jogadores:
+                button.disabled = True
+            await self.atualizar_embed(interaction)
 
 # --- FUNÇÕES AUXILIARES ---
 
@@ -527,25 +570,55 @@ async def perfil(ctx, membro: discord.Member = None):
     embed.set_footer(text=f"WR: {wr} | MVPs: {d.get('mvps', 0)} | Streak: {streak} {fogo}")
     await ctx.send(embed=embed)
 
+@bot.hybrid_command(name="historico_player", description="Vê histórico de um jogador.")
+async def historico_player(ctx, membro: discord.Member = None):
+    alvo = membro or ctx.author
+    d = get_jogador(alvo.id)
+    if not d: return await ctx.send("Jogador não registrado.", ephemeral=True)
+    
+    partidas = get_historico_pessoal(d['nick'])
+    if not partidas: return await ctx.send(f"**{d['nick']}** ainda não jogou.", ephemeral=True)
+    
+    embed = discord.Embed(title=f"📜 Histórico de {d['nick']}", color=0x9b59b6)
+    for p in partidas:
+        venceu = False
+        time_jog = "Indefinido"
+        if d['nick'] in p['azul']: 
+            time_jog = "Azul"
+            if p['vencedor'] == 'azul': venceu = True
+        elif d['nick'] in p['vermelho']: 
+            time_jog = "Vermelho"
+            if p['vencedor'] == 'vermelho': venceu = True
+            
+        resultado = "✅ Vitória" if venceu else "❌ Derrota"
+        data_fmt = p['data'].strftime("%d/%m %H:%M")
+        embed.add_field(name=f"{resultado} ({p.get('modo','sr').upper()})", value=f"📅 {data_fmt}\n🛡️ Time: {time_jog}", inline=False)
+        
+    await ctx.send(embed=embed)
+
 @bot.hybrid_command(name="ranking", description="Top Jogadores.")
 @app_commands.choices(modo=[app_commands.Choice(name="Summoner's Rift", value="sr"), app_commands.Choice(name="ARAM", value="aram"), app_commands.Choice(name="Arena", value="arena")])
 async def ranking(ctx, modo: app_commands.Choice[str] = None):
     sel_modo = modo.value if modo else "sr"
-    top = get_ranking(sel_modo)
+    # Inicia a View Paginada na página 0
+    view = RankingView(sel_modo)
+    # Criar o embed inicial e mandar com a view
+    top = get_ranking_paginado(sel_modo, 0, 10)
     icone = get_icone_modo(sel_modo)
     embed = discord.Embed(title=f"{icone} Top 10 - {sel_modo.upper()}", color=0xffd700)
     txt = ""
     for i, p in enumerate(top):
         val = p.get('pdl', 1000) if sel_modo == "sr" else p.get(f'pdl_{sel_modo}', 1000)
         medalha = ["🥇","🥈","🥉"][i] if i < 3 else f"{i+1}º"
-        txt += f"{medalha} **{p['nick']}** — {val} PDL\n"
+        txt += f"**{medalha} {p['nick']}** — {val} PDL\n"
     embed.description = txt if txt else "Vazio."
-    await ctx.send(embed=embed)
+    embed.set_footer(text=f"Página 1 • Total: {view.total_jogadores}")
+    await ctx.send(embed=embed, view=view)
 
 @bot.hybrid_command(name="help", description="Ajuda.")
 async def help(ctx):
     embed = discord.Embed(title="📘 Manual Inhouse", color=0x3498db)
-    embed.add_field(name="Jogadores", value="`/registrar`\nUse o **Painel** para entrar na fila!\n`/rota`, `/perfil`, `/ranking`")
+    embed.add_field(name="Jogadores", value="`/registrar`\nUse o **Painel** para entrar na fila!\n`/rota`, `/perfil`, `/ranking`\n`/historico_player`")
     embed.add_field(name="Admin", value="`/admin painel`\n`/start` (Configura a sala)\n`/admin sub` (Troca e Punição)\n`/admin vitoria`, `/admin cancelar`")
     await ctx.send(embed=embed)
 

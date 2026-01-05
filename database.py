@@ -1,6 +1,6 @@
 import os
 from pymongo import MongoClient
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 MONGO_URL = os.environ.get('MONGO_URL')
 
@@ -14,7 +14,7 @@ else:
 
 col_partidas = db["Partidas"]
 
-# --- FUNÇÕES ---
+# --- FUNÇÕES BÁSICAS ---
 
 def get_jogador(user_id):
     if collection is None: return None
@@ -22,7 +22,6 @@ def get_jogador(user_id):
 
 def criar_jogador(user_id, nick, opgg):
     if collection is None: return
-    # Inicializa com PDL base para TODOS os modos
     collection.insert_one({
         "_id": str(user_id),
         "nick": nick,
@@ -30,24 +29,19 @@ def criar_jogador(user_id, nick, opgg):
         "pdl": 1000,        # Summoner's Rift
         "pdl_aram": 1000,   # ARAM
         "pdl_arena": 1000,  # Arena
-        "vitorias": 0, "derrotas": 0, # Stats Gerais (ou pode separar se quiser)
-        "mvps": 0
+        "vitorias": 0, "derrotas": 0, 
+        "mvps": 0,
+        "banido_ate": None
     })
 
-# Agora aceita o argumento 'modo'
 def atualizar_pdl(user_id, pdl_base, vitoria, modo="sr"):
-    if collection is None: return
+    if collection is None: return 0
     
-    # Define qual campo do banco vamos mexer
     campo_pdl = "pdl" # Default SR
     if modo == "aram": campo_pdl = "pdl_aram"
     if modo == "arena": campo_pdl = "pdl_arena"
 
     jogador = get_jogador(user_id)
-    # Se o jogador for antigo e não tiver o campo novo, assume 1000
-    pdl_atual = jogador.get(campo_pdl, 1000)
-    
-    # Lógica de Streak (Simplificada para o exemplo)
     streak_atual = jogador.get("streak", 0)
     bonus = 0
     
@@ -59,14 +53,11 @@ def atualizar_pdl(user_id, pdl_base, vitoria, modo="sr"):
     
     pdl_final = pdl_base + bonus
 
-    # Atualiza o campo dinamicamente
     update_query = {
         "$inc": {campo_pdl: pdl_final, "vitorias": 1 if vitoria else 0, "derrotas": 0 if vitoria else 1},
         "$set": {"streak": novo_streak}
     }
     
-    # Se o campo não existia antes, o $inc cria ele automaticamente? 
-    # No Mongo sim, mas se basear no get anterior é mais seguro garantir.
     collection.update_one({"_id": str(user_id)}, update_query)
     
     # Verifica se ficou negativo
@@ -76,23 +67,64 @@ def atualizar_pdl(user_id, pdl_base, vitoria, modo="sr"):
     
     return bonus
 
-def get_ranking(modo="sr", rota_filtro=None):
+# --- FUNÇÕES DE PUNIÇÃO ---
+
+def aplicar_punicao(user_id, pdl_multa, minutos_ban):
+    if collection is None: return
+    desbanir_em = datetime.now() + timedelta(minutes=minutos_ban)
+    collection.update_one(
+        {"_id": str(user_id)},
+        {
+            "$inc": {"pdl": -pdl_multa},
+            "$set": {"banido_ate": desbanir_em}
+        }
+    )
+
+def checar_banimento(user_id):
+    if collection is None: return False, None
+    user = collection.find_one({"_id": str(user_id)})
+    if not user: return False, None
+    ban_ate = user.get("banido_ate")
+    if ban_ate and ban_ate > datetime.now():
+        restante = ban_ate - datetime.now()
+        minutos = int(restante.total_seconds() / 60) + 1
+        return True, f"{minutos} min"
+    return False, None
+
+# --- NOVAS FUNÇÕES: PAGINAÇÃO E HISTÓRICO PESSOAL ---
+
+def get_ranking_paginado(modo="sr", skip=0, limit=10):
+    """Retorna o ranking fatiado para paginação."""
     if collection is None: return []
-    
-    # Define qual PDL usar para ordenar
     campo_sort = "pdl"
     if modo == "aram": campo_sort = "pdl_aram"
     if modo == "arena": campo_sort = "pdl_arena"
+    
+    return list(collection.find().sort(campo_sort, -1).skip(skip).limit(limit))
 
+def contar_jogadores():
+    """Conta total de jogadores para saber quantas páginas existem."""
+    if collection is None: return 0
+    return collection.count_documents({})
+
+def get_historico_pessoal(nick):
+    """Busca as últimas 5 partidas onde o nick aparece."""
+    if col_partidas is None: return []
+    query = {"$or": [{"azul": nick}, {"vermelho": nick}]}
+    return list(col_partidas.find(query).sort("data", -1).limit(5))
+
+# --- UTILS ---
+
+def get_ranking(modo="sr", rota_filtro=None):
+    # Mantido para compatibilidade, mas o bot usará o paginado preferencialmente
+    if collection is None: return []
+    campo_sort = "pdl"
+    if modo == "aram": campo_sort = "pdl_aram"
+    if modo == "arena": campo_sort = "pdl_arena"
     query = {}
-    if rota_filtro and modo == "sr": # Rota só faz sentido no SR
-        query["rota"] = rota_filtro
-
-    # Retorna ordenado pelo PDL do modo escolhido
+    if rota_filtro and modo == "sr": query["rota"] = rota_filtro
     return list(collection.find(query).sort(campo_sort, -1).limit(10))
 
-# --- Mantenha as outras funções (editar_perfil, set_pdl_manual, etc) iguais ---
-# Apenas certifique-se de importar tudo no main.py
 def atualizar_rota(user_id, rota):
     if collection is None: return
     collection.update_one({"_id": str(user_id)}, {"$set": {"rota": rota}})
@@ -103,7 +135,6 @@ def editar_perfil(user_id, campo, valor):
 
 def set_pdl_manual(user_id, valor):
     if collection is None: return
-    # Por padrão edita o SR, se quiser editar outros precisa adaptar o comando admin
     collection.update_one({"_id": str(user_id)}, {"$set": {"pdl": int(valor)}})
 
 def get_dados_varios(lista_ids):
@@ -121,8 +152,6 @@ def resgatar_diario(user_id):
     jogador = collection.find_one({"_id": str(user_id)})
     if not jogador: return False, "Registre-se primeiro!"
     if jogador.get("ultimo_diario") == hoje: return False, "Já resgatou hoje!"
-    
-    # Dá PDL para o SR (padrão) ou distribui um pouco pra cada? Vamos dar pro SR por enquanto
     collection.update_one({"_id": str(user_id)}, {"$inc": {"pdl": 10}, "$set": {"ultimo_diario": hoje}})
     return True, "Resgatado com sucesso!"
 
