@@ -37,7 +37,7 @@ def criar_jogador(user_id, nick, opgg):
 def atualizar_pdl(user_id, pdl_base, vitoria, modo="sr"):
     if collection is None: return 0
     
-    campo_pdl = "pdl" # Default SR
+    campo_pdl = "pdl" 
     if modo == "aram": campo_pdl = "pdl_aram"
     if modo == "arena": campo_pdl = "pdl_arena"
 
@@ -91,7 +91,7 @@ def checar_banimento(user_id):
         return True, f"{minutos} min"
     return False, None
 
-# --- NOVAS FUNÇÕES: PAGINAÇÃO E HISTÓRICO PESSOAL ---
+# --- RANKING, LISTAGEM E HISTÓRICO ---
 
 def get_ranking_paginado(modo="sr", skip=0, limit=10):
     """Retorna o ranking fatiado para paginação."""
@@ -101,6 +101,11 @@ def get_ranking_paginado(modo="sr", skip=0, limit=10):
     if modo == "arena": campo_sort = "pdl_arena"
     
     return list(collection.find().sort(campo_sort, -1).skip(skip).limit(limit))
+
+def get_todos_jogadores_paginado(skip=0, limit=10):
+    """Retorna todos os jogadores ordenados por Nick (para admins)."""
+    if collection is None: return []
+    return list(collection.find().sort("nick", 1).skip(skip).limit(limit))
 
 def contar_jogadores():
     """Conta total de jogadores para saber quantas páginas existem."""
@@ -113,10 +118,9 @@ def get_historico_pessoal(nick):
     query = {"$or": [{"azul": nick}, {"vermelho": nick}]}
     return list(col_partidas.find(query).sort("data", -1).limit(5))
 
-# --- UTILS ---
+# --- UTILS DB ---
 
 def get_ranking(modo="sr", rota_filtro=None):
-    # Mantido para compatibilidade, mas o bot usará o paginado preferencialmente
     if collection is None: return []
     campo_sort = "pdl"
     if modo == "aram": campo_sort = "pdl_aram"
@@ -133,9 +137,12 @@ def editar_perfil(user_id, campo, valor):
     if collection is None: return
     collection.update_one({"_id": str(user_id)}, {"$set": {campo: valor}})
 
-def set_pdl_manual(user_id, valor):
+def set_pdl_manual(user_id, valor, modo="sr"):
     if collection is None: return
-    collection.update_one({"_id": str(user_id)}, {"$set": {"pdl": int(valor)}})
+    campo = "pdl"
+    if modo == "aram": campo = "pdl_aram"
+    if modo == "arena": campo = "pdl_arena"
+    collection.update_one({"_id": str(user_id)}, {"$set": {campo: int(valor)}})
 
 def get_dados_varios(lista_ids):
     if collection is None: return []
