@@ -1,3 +1,5 @@
+import discord
+
 def calcular_elo(pdl):
     if pdl < 1000: return "Ferro"
     if pdl < 1200: return "Bronze"
@@ -15,25 +17,15 @@ def calcular_winrate(vitorias, derrotas):
     return f"{int(wr)}%"
 
 def get_icone_modo(modo):
-    """
-    Retorna o emoji personalizado do modo de jogo.
-    IMPORTANTE: Substitua os exemplos abaixo pelo código que você pegar no Discord
-    usando \:nome_do_emoji:
-    """
     icones = {
         # Exemplo: "<:nome:ID>"
         "sr": "<:summoners_rift_icon:1457516794183946333>   ",
         "aram": "<:aram_icon:1457516650130706577>",
         "arena": "<:arena_icon:1457516699535278204>"
     }
-    # Retorna o emoji ou um controle de videogame genérico se der erro
     return icones.get(modo, "🎮")
 
 def get_icone_elo(pdl):
-    """
-    Retorna o emoji personalizado do Elo.
-    Você também pode criar emojis para cada elo (Ferro, Ouro, etc).
-    """
     elo = calcular_elo(pdl)
     icones = {
         # Configure seus emojis de elo aqui também se quiser!
@@ -45,4 +37,29 @@ def get_icone_elo(pdl):
         "Esmeralda": "<:esmeralda:1457521515372351644>",   
         "Diamante+": "<:diamante:1457521834386915389>"    
     }
-    return icones.get(elo, "🏅")
+    return "🏅"
+
+async def gerenciar_cargos_elo(member: discord.Member, pdl: int, modo: str = "sr"):
+    """Atualiza o cargo do jogador baseado no PDL e Modo."""
+    guild = member.guild
+    elos_base = ["Ferro", "Bronze", "Prata", "Ouro", "Platina", "Esmeralda", "Diamante+"]
+    elo_atual_base = calcular_elo(pdl)
+    
+    suffix = ""
+    if modo == "aram": suffix = " ARAM"
+    if modo == "arena": suffix = " Arena"
+    
+    elo_atual_nome = f"{elo_atual_base}{suffix}"
+    cargos_modo = [f"{e}{suffix}" for e in elos_base]
+    
+    # Remove cargos antigos do mesmo modo
+    cargos_remover = [r for r in member.roles if r.name in cargos_modo and r.name != elo_atual_nome]
+    if cargos_remover:
+        try: await member.remove_roles(*cargos_remover)
+        except: pass
+
+    # Adiciona o novo
+    role_nova = discord.utils.get(guild.roles, name=elo_atual_nome)
+    if role_nova and role_nova not in member.roles:
+        try: await member.add_roles(role_nova)
+        except: pass
