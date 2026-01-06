@@ -66,10 +66,12 @@ class Matchmaking(commands.Cog):
 
         canais = await self.criar_canais_voz(interaction.guild, azul, verm)
 
+        # SALVANDO INICIO PARA CALCULAR DURAÇÃO
         self.bot.partida_atual = {
             'azul': azul, 'vermelho': verm, 
             'modo': modo.value, 'valendo': valendo_pdl, 
-            'canais': canais
+            'canais': canais,
+            'inicio': datetime.datetime.now()
         }
 
         embed = discord.Embed(title=f"{get_icone_modo(modo.value)} Partida Iniciada: {modo.value.upper()}", color=0x0099ff)
