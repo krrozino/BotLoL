@@ -8,8 +8,8 @@ from server import keep_alive
 # Importando database (CORRIGIDO: Incluindo get_todos_jogadores_paginado)
 from database import (
     get_jogador, criar_jogador, atualizar_pdl, atualizar_rota, 
-    get_ranking, editar_perfil, set_pdl_manual, get_dados_varios, 
-    adicionar_mvp, resgatar_diario, salvar_historico, get_ultimas_partidas,
+    editar_perfil, set_pdl_manual, get_dados_varios, 
+    adicionar_mvp, resgatar_diario, salvar_historico,
     aplicar_punicao, checar_banimento,
     get_ranking_paginado, contar_jogadores, get_historico_pessoal, get_todos_jogadores_paginado
 )

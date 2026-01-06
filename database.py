@@ -4,15 +4,20 @@ from datetime import datetime, date, timedelta
 
 MONGO_URL = os.environ.get('MONGO_URL')
 
+collection = None
+col_partidas = None
+
 if MONGO_URL:
-    cluster = MongoClient(MONGO_URL)
-    db = cluster["InhouseBot"]
-    collection = db["Jogadores"]
+    try:
+        cluster = MongoClient(MONGO_URL)
+        db = cluster["InhouseBot"]
+        collection = db["Jogadores"]
+        col_partidas = db["Partidas"]
+        print("✅ Conectado ao MongoDB com sucesso.")
+    except Exception as e:
+        print(f"❌ Erro ao conectar no MongoDB: {e}")
 else:
     print("⚠️ AVISO: MONGO_URL não encontrada.")
-    collection = None
-
-col_partidas = db["Partidas"]
 
 # --- FUNÇÕES BÁSICAS ---
 
@@ -22,26 +27,38 @@ def get_jogador(user_id):
 
 def criar_jogador(user_id, nick, opgg):
     if collection is None: return
-    collection.insert_one({
-        "_id": str(user_id),
-        "nick": nick,
-        "opgg": opgg,
-        "pdl": 1000,        # Summoner's Rift
-        "pdl_aram": 1000,   # ARAM
-        "pdl_arena": 1000,  # Arena
-        "vitorias": 0, "derrotas": 0, 
-        "mvps": 0,
-        "banido_ate": None
-    })
+    try:
+        collection.insert_one({
+            "_id": str(user_id),
+            "nick": nick,
+            "opgg": opgg,
+            "pdl": 1000,        # Summoner's Rift
+            "pdl_aram": 1000,   # ARAM
+            "pdl_arena": 1000,  # Arena
+            "vitorias": 0, "derrotas": 0, 
+            "mvps": 0,
+            "banido_ate": None,
+            "ultimo_diario": None
+        })
+    except Exception as e:
+        print(f"Erro ao criar jogador: {e}")
 
 def atualizar_pdl(user_id, pdl_base, vitoria, modo="sr"):
+    """
+    Atualiza o PDL baseado no modo de jogo (sr, aram, arena).
+    """
     if collection is None: return 0
     
+    # Define qual campo editar baseado no modo
     campo_pdl = "pdl" 
     if modo == "aram": campo_pdl = "pdl_aram"
     if modo == "arena": campo_pdl = "pdl_arena"
 
     jogador = get_jogador(user_id)
+    if not jogador: return 0
+
+    # Pega o valor atual, garantindo que exista (fallback para 1000)
+    pdl_atual_banco = jogador.get(campo_pdl, 1000)
     streak_atual = jogador.get("streak", 0)
     bonus = 0
     
@@ -62,22 +79,38 @@ def atualizar_pdl(user_id, pdl_base, vitoria, modo="sr"):
     
     # Verifica se ficou negativo
     novo_dado = get_jogador(user_id)
-    if novo_dado.get(campo_pdl, 1000) < 0:
+    if novo_dado and novo_dado.get(campo_pdl, 1000) < 0:
         collection.update_one({"_id": str(user_id)}, {"$set": {campo_pdl: 0}})
     
     return bonus
 
-# --- FUNÇÕES DE PUNIÇÃO ---
+# --- ADMIN E LISTAGEM ---
+
+def get_todos_jogadores_paginado(skip=0, limit=10):
+    """Retorna lista de jogadores para o admin (paginada)."""
+    if collection is None: return []
+    return list(collection.find().sort("nick", 1).skip(skip).limit(limit))
+
+def contar_jogadores():
+    if collection is None: return 0
+    return collection.count_documents({})
+
+def get_ranking_paginado(modo="sr", skip=0, limit=10):
+    if collection is None: return []
+    campo_sort = "pdl"
+    if modo == "aram": campo_sort = "pdl_aram"
+    if modo == "arena": campo_sort = "pdl_arena"
+    
+    return list(collection.find().sort(campo_sort, -1).skip(skip).limit(limit))
+
+# --- OUTRAS FUNÇÕES (MANTIDAS) ---
 
 def aplicar_punicao(user_id, pdl_multa, minutos_ban):
     if collection is None: return
     desbanir_em = datetime.now() + timedelta(minutes=minutos_ban)
     collection.update_one(
         {"_id": str(user_id)},
-        {
-            "$inc": {"pdl": -pdl_multa},
-            "$set": {"banido_ate": desbanir_em}
-        }
+        {"$inc": {"pdl": -pdl_multa}, "$set": {"banido_ate": desbanir_em}}
     )
 
 def checar_banimento(user_id):
@@ -91,43 +124,10 @@ def checar_banimento(user_id):
         return True, f"{minutos} min"
     return False, None
 
-# --- RANKING, LISTAGEM E HISTÓRICO ---
-
-def get_ranking_paginado(modo="sr", skip=0, limit=10):
-    """Retorna o ranking fatiado para paginação."""
-    if collection is None: return []
-    campo_sort = "pdl"
-    if modo == "aram": campo_sort = "pdl_aram"
-    if modo == "arena": campo_sort = "pdl_arena"
-    
-    return list(collection.find().sort(campo_sort, -1).skip(skip).limit(limit))
-
-def get_todos_jogadores_paginado(skip=0, limit=10):
-    """Retorna todos os jogadores ordenados por Nick (para admins)."""
-    if collection is None: return []
-    return list(collection.find().sort("nick", 1).skip(skip).limit(limit))
-
-def contar_jogadores():
-    """Conta total de jogadores para saber quantas páginas existem."""
-    if collection is None: return 0
-    return collection.count_documents({})
-
 def get_historico_pessoal(nick):
-    """Busca as últimas 5 partidas onde o nick aparece."""
     if col_partidas is None: return []
     query = {"$or": [{"azul": nick}, {"vermelho": nick}]}
     return list(col_partidas.find(query).sort("data", -1).limit(5))
-
-# --- UTILS DB ---
-
-def get_ranking(modo="sr", rota_filtro=None):
-    if collection is None: return []
-    campo_sort = "pdl"
-    if modo == "aram": campo_sort = "pdl_aram"
-    if modo == "arena": campo_sort = "pdl_arena"
-    query = {}
-    if rota_filtro and modo == "sr": query["rota"] = rota_filtro
-    return list(collection.find(query).sort(campo_sort, -1).limit(10))
 
 def atualizar_rota(user_id, rota):
     if collection is None: return
@@ -171,7 +171,3 @@ def salvar_historico(time_vencedor, azul_nomes, vermelho_nomes, modo="sr"):
         "vermelho": vermelho_nomes,
         "modo": modo
     })
-
-def get_ultimas_partidas():
-    if col_partidas is None: return []
-    return list(col_partidas.find().sort("data", -1).limit(5))
